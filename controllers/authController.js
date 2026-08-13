@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import pool from '../db.js';
+import { isValidEmail, validatePassword } from '../utils/validators.js';
 
 export const registerUser = async (req, res) => {
   try {
@@ -8,6 +9,15 @@ export const registerUser = async (req, res) => {
 
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'All fields are required.' });
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
+
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
     }
 
     const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
