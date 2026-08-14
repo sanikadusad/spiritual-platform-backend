@@ -2,8 +2,8 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import pool from '../db.js';
 import { isValidEmail, validatePassword } from '../utils/validators.js';
-import { generateOtp } from '../utils/otp.js';
-import { sendOtpEmail } from '../utils/mailer.js';
+import { generateOtp, generateResetToken } from '../utils/otp.js';
+import { sendOtpEmail, sendPasswordResetEmail } from '../utils/mailer.js';
 
 export const registerUser = async (req, res) => {
   try {
@@ -196,6 +196,90 @@ export const resendOtp = async (req, res) => {
     res.status(200).json({ message: 'A new verification code has been sent.' });
   } catch (error) {
     console.error('Resend OTP error:', error);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+};
+
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body || {};
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required.' });
+    }
+
+    const userResult = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(200).json({
+        message: 'If an account with that email exists, a reset link has been sent.',
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    const resetToken = generateResetToken();
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+
+    await pool.query(
+      `INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)`,
+      [user.id, resetToken, expiresAt]
+    );
+
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+    await sendPasswordResetEmail(email, resetLink);
+
+    res.status(200).json({
+      message: 'If an account with that email exists, a reset link has been sent.',
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword } = req.body || {};
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'Token and new password are required.' });
+    }
+
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
+    }
+
+    const tokenResult = await pool.query(
+      'SELECT user_id, expires_at FROM password_reset_tokens WHERE token = $1',
+      [token]
+    );
+
+    if (tokenResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired reset link. Please request a new one.' });
+    }
+
+    const tokenRow = tokenResult.rows[0];
+
+    if (new Date() > new Date(tokenRow.expires_at)) {
+      return res.status(400).json({ error: 'This reset link has expired. Please request a new one.' });
+    }
+
+    const saltRounds = 10;
+    const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
+
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [
+      newPasswordHash,
+      tokenRow.user_id,
+    ]);
+
+    await pool.query('DELETE FROM password_reset_tokens WHERE user_id = $1', [tokenRow.user_id]);
+
+    res.status(200).json({ message: 'Password reset successful. You can now log in with your new password.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 };
