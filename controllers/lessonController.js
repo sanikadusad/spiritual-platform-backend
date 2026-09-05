@@ -58,20 +58,51 @@ export const createLesson = async (req, res) => {
 };
 
 export const getLessonsByCourse = async (req, res) => {
-  try {
-    const { courseId } = req.params;
-
-    const result = await pool.query(
-      'SELECT * FROM course_lessons WHERE course_id = $1 ORDER BY position ASC',
-      [courseId]
-    );
-
-    res.status(200).json({ lessons: result.rows });
-  } catch (error) {
-    console.error('Get lessons error:', error);
-    res.status(500).json({ error: 'Something went wrong. Please try again.' });
-  }
-};
+    try {
+      const { courseId } = req.params;
+      const userId = req.user?.userId;
+      const userRole = req.user?.role;
+  
+      const courseResult = await pool.query('SELECT mentor_id FROM courses WHERE id = $1', [courseId]);
+      if (courseResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Course not found.' });
+      }
+  
+      const isMentorOrAdmin =
+        userRole === 'admin' || (userRole === 'mentor' && courseResult.rows[0].mentor_id === userId);
+  
+      let hasAccess = isMentorOrAdmin;
+  
+      if (!hasAccess && userId) {
+        const enrollment = await pool.query(
+          'SELECT id FROM course_enrollments WHERE user_id = $1 AND course_id = $2',
+          [userId, courseId]
+        );
+        hasAccess = enrollment.rows.length > 0;
+      }
+  
+      const result = await pool.query(
+        'SELECT * FROM course_lessons WHERE course_id = $1 ORDER BY position ASC',
+        [courseId]
+      );
+  
+      if (!hasAccess) {
+        const preview = result.rows.map((lesson) => ({
+          id: lesson.id,
+          title: lesson.title,
+          content_type: lesson.content_type,
+          position: lesson.position,
+          duration_seconds: lesson.duration_seconds,
+        }));
+        return res.status(200).json({ lessons: preview, locked: true });
+      }
+  
+      res.status(200).json({ lessons: result.rows, locked: false });
+    } catch (error) {
+      console.error('Get lessons error:', error);
+      res.status(500).json({ error: 'Something went wrong. Please try again.' });
+    }
+  };
 
 export const updateLesson = async (req, res) => {
   try {
