@@ -116,3 +116,92 @@ export const uploadMeditation = async (req, res) => {
       res.status(500).json({ error: 'Something went wrong. Please try again.' });
     }
   };
+
+  export const updateProgress = async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { progressSeconds, completed } = req.body || {};
+      const userId = req.user.userId;
+  
+      if (progressSeconds === undefined) {
+        return res.status(400).json({ error: 'progressSeconds is required.' });
+      }
+  
+      const result = await pool.query(
+        `INSERT INTO meditation_progress (user_id, meditation_id, progress_seconds, completed, last_played_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (user_id, meditation_id)
+         DO UPDATE SET progress_seconds = $3, completed = $4, last_played_at = NOW()
+         RETURNING *`,
+        [userId, id, progressSeconds, completed || false]
+      );
+  
+      res.status(200).json({ progress: result.rows[0] });
+    } catch (error) {
+      console.error('Update progress error:', error);
+      res.status(500).json({ error: 'Something went wrong. Please try again.' });
+    }
+  };
+  
+  export const getUserProgress = async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.userId;
+  
+      const result = await pool.query(
+        'SELECT * FROM meditation_progress WHERE user_id = $1 AND meditation_id = $2',
+        [userId, id]
+      );
+  
+      res.status(200).json({ progress: result.rows[0] || null });
+    } catch (error) {
+      console.error('Get progress error:', error);
+      res.status(500).json({ error: 'Something went wrong. Please try again.' });
+    }
+  };
+  
+  export const toggleBookmark = async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.userId;
+  
+      const existing = await pool.query(
+        'SELECT id FROM meditation_bookmarks WHERE user_id = $1 AND meditation_id = $2',
+        [userId, id]
+      );
+  
+      if (existing.rows.length > 0) {
+        await pool.query('DELETE FROM meditation_bookmarks WHERE user_id = $1 AND meditation_id = $2', [
+          userId,
+          id,
+        ]);
+        return res.status(200).json({ bookmarked: false });
+      }
+  
+      await pool.query(
+        'INSERT INTO meditation_bookmarks (user_id, meditation_id) VALUES ($1, $2)',
+        [userId, id]
+      );
+      res.status(200).json({ bookmarked: true });
+    } catch (error) {
+      console.error('Toggle bookmark error:', error);
+      res.status(500).json({ error: 'Something went wrong. Please try again.' });
+    }
+  };
+  
+  export const getBookmarkStatus = async (req, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.userId;
+  
+      const result = await pool.query(
+        'SELECT id FROM meditation_bookmarks WHERE user_id = $1 AND meditation_id = $2',
+        [userId, id]
+      );
+  
+      res.status(200).json({ bookmarked: result.rows.length > 0 });
+    } catch (error) {
+      console.error('Get bookmark status error:', error);
+      res.status(500).json({ error: 'Something went wrong. Please try again.' });
+    }
+  };
