@@ -26,20 +26,36 @@ export const createCourse = async (req, res) => {
 export const getCourses = async (req, res) => {
   try {
     const isAdmin = req.user?.role === 'admin';
+    const userId = req.user?.userId;
+    const { status } = req.query;
 
     let query = `
       SELECT c.*, u.name AS mentor_name
       FROM courses c
       LEFT JOIN users u ON c.mentor_id = u.id
     `;
+    const conditions = [];
+    const params = [];
 
-    if (!isAdmin) {
-      query += " WHERE c.status = 'published'";
+    if (isAdmin) {
+      if (status && ['draft', 'published', 'cancelled'].includes(status)) {
+        params.push(status);
+        conditions.push(`c.status = $${params.length}`);
+      }
+    } else if (userId) {
+      conditions.push(`(c.status = 'published' OR c.mentor_id = $${params.length + 1})`);
+      params.push(userId);
+    } else {
+      conditions.push(`c.status = 'published'`);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
     }
 
     query += ' ORDER BY c.created_at DESC';
 
-    const result = await pool.query(query);
+    const result = await pool.query(query, params);
     res.status(200).json({ courses: result.rows });
   } catch (error) {
     console.error('Get courses error:', error);
@@ -80,7 +96,7 @@ export const updateCourse = async (req, res) => {
       return res.status(404).json({ error: 'Course not found.' });
     }
 
-    if (status && !['draft', 'published'].includes(status)) {
+    if (status && !['draft', 'published', 'cancelled'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status.' });
     }
 
